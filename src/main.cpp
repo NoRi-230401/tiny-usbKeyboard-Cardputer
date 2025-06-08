@@ -1,48 +1,35 @@
 // --------------------------------------------------------
-//  *** tiny bleKeyboard ***     by NoRi
+//  *** tiny usbKeyboard ***     by NoRi
 //  bluetooth keyboard software for Cardputer
-//   2025-06-08  v102
-// https://github.com/NoRi-230401/tiny-bleKeyboard-Cardputer
+//   2025-06-08  v104
+// https://github.com/NoRi-230401/tiny-usbKeyboard-Cardputer
 //  MIT License
 // --------------------------------------------------------
 #include <Arduino.h>
 #include <SD.h>
 #include <USB.h>
 #include <USBHIDKeyboard.h>
-#include <nvs.h>
 #include <M5Cardputer.h>
 #include <M5StackUpdater.h>
-#include <esp_sleep.h>     // Added for Deep Sleep
-#include <driver/gpio.h>   // Added for gpio_pullup_en
-#include <WiFi.h>          // Added for WiFi.mode(WIFI_OFF)
-#include <driver/rtc_io.h> // Added for rtc_gpio_pullup_en
 #include <algorithm>
-#include <string> // Added for std::string
+#include <string>
 #include <map>
 
 void setup();
 void loop();
 bool checkInput(m5::Keyboard_Class::KeysState &current_keys_state);
 bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys);
-void usbSend(const m5::Keyboard_Class::KeysState &current_keys);
-// void notifyBleConnect();
-// void powerSaveAndDisp();
+void keySend(const m5::Keyboard_Class::KeysState &current_keys);
 void dispLx(uint8_t Lx, const char *msg);
 void dispModsKeys(const char *msg);
 void dispModsCls();
 void dispSendKey(const char *msg);
 void dispSendKey2(const char *msg);
 void dispFnState();
-// void dispBleState();
 void dispInit();
 void m5stack_begin();
 void SDU_lobby();
 bool SD_begin();
-// void goDeepSleep();
-void fnStateInit();
-bool wrtNVS(const char *title, uint8_t data);
-bool rdNVS(const char *title, uint8_t &data);
-// void dispBatteryLevel();
 
 // ----- Cardputer Specific disp paramaters -----------
 const int32_t N_COLS = 20; // columns
@@ -55,16 +42,8 @@ static int32_t LINE0, LINE1, LINE2, LINE3, LINE4, LINE5;
 //-------------------------------------
 SPIClass SPI2;
 static bool SD_ENABLE;
-static bool capsLock; // fn + 1  : Cpas Lock On/Off
-static bool cursMode; // fn + 2  : cursor movement mode On/Off
-
-// -- Auto Power Off(APO) --- (fn + 3)  ----
-nvs_handle_t nvs;
-const char *NVS_SETTING = "setting";
-// const char *APO_TITLE = "apo";
-const char *CURM_TITLE = "curm";
-const uint8_t CUSRM_ON = 1;
-const uint8_t CURSM_OFF = 0;
+static bool capsLock = false; // fn + 1  : Cpas Lock On/Off
+static bool cursMode = false; // fn + 2  : cursor movement mode On/Off
 
 // --- hid key-code define ----
 const uint8_t HID_UPARROW = 0x52;
@@ -114,18 +93,10 @@ const std::map<uint8_t, uint8_t> generalNavigationMappings = {
 };
 // --------------------------------------
 
-unsigned long lastKeyInput = 0;          // last key input time
-// const uint8_t BRIGHT_NORMAL = 70;        // LCD normal bright level
-// const uint8_t BRIGHT_LOW = 20;           // LCD low bright level
+const uint8_t BRIGHT_NORMAL = 70;        // LCD normal bright level
 const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report (excluding modifier keys)
 const int COL_CAPSLOCK = 1;              // "Cap" display start position
 const int COL_CURSORMODE = 10;           // "CurM" display start position
-// const int COL_APO = 15;                  // "Apo" display start position
-// const int COL_BATVAL = 16;               // Battery value display start position
-// const int WIDTH_BATVAL_LEN = 3;          // Battery value display length
-
-// String const arrow_key[] = {"[ left ]", "[ down ]", "[ up ]", "[ right ]"};
-// int arrow_key_index = -1;
 
 USBHIDKeyboard usbKey;
 KeyReport usbKeyReport = {0};
@@ -140,13 +111,10 @@ void setup()
         SD.end();
     }
 
-    fnStateInit(); // function state initialize
-    dispInit();    // display initialize
+    dispInit(); // display initialize
     USB.begin();
     usbKey.begin();
-    lastKeyInput = millis();
 }
-
 
 void loop()
 {
@@ -156,7 +124,7 @@ void loop()
     if (checkInput(current_keys_state))         // check Cardputer key input and get state
     {                                           // if keys input
         if (!specialFnMode(current_keys_state)) // special function mode check
-            usbSend(current_keys_state);        // send data via bluetooth
+            keySend(current_keys_state);        // send data via bluetooth
     }
 
     delay(5);
@@ -166,7 +134,6 @@ bool checkInput(m5::Keyboard_Class::KeysState &current_keys_state)
 { // check Cardputer key input
     if (M5Cardputer.Keyboard.isChange())
     {
-        lastKeyInput = millis();
         if (M5Cardputer.Keyboard.isPressed())
         {
             current_keys_state = M5Cardputer.Keyboard.keysState();
@@ -221,7 +188,7 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
     return false;
 }
 
-void usbSend(const m5::Keyboard_Class::KeysState &current_keys)
+void keySend(const m5::Keyboard_Class::KeysState &current_keys)
 {
     usbKeyReport = {0};
     String modsStr = "";
@@ -297,7 +264,7 @@ void usbSend(const m5::Keyboard_Class::KeysState &current_keys)
         }
     }
 
-    // Send keyReport via bluetooth
+    // Send keyReport via USB
     usbKey.sendReport(&usbKeyReport);
 
     String keysDisplayString = "";
@@ -319,13 +286,12 @@ void usbSend(const m5::Keyboard_Class::KeysState &current_keys)
     }
 }
 
-
 void dispLx(uint8_t Lx, const char *msg)
 {
     //*********** Lx is (0 to N_ROWS - 1) *************************
     // -----01234567890123456789--------------------------
     // L0  "- tiny usbKeyborad -" : title
-    // L1               bat.100%  : battery Status
+    // L1                         :
     // L2   fn1:Cap 2:CurM        : fn
     // L3    unlock   off         :
     // L4   Shift Ctrl Alt Opt    : modifiers keys
@@ -356,7 +322,7 @@ void dispSendKey(const char *msg)
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     dispLx(5, msg);
 #ifdef DEBUG
-    Serial.println(msg); // msg is already const char*
+    Serial.println(msg);
 #endif
 }
 
@@ -367,15 +333,15 @@ void dispSendKey2(const char *msg)
     snprintf(buffer, sizeof(buffer), " %s", msg);
     dispLx(5, buffer);
 #ifdef DEBUG
-    Serial.println(msg); // msg is already const char*
+    Serial.println(msg);
 #endif
 }
 
 void dispFnState()
 { // Line3 : fn1 to fn3 state display
     //-------- 01234567890123456789---
-    //_____L2 "fn1:Cap 2:CurM 3:Apo"__
-    //_____L3_" unlock   off  30min"__
+    //_____L2 "fn1:Cap 2:CurM      "__
+    //_____L3_" unlock   off       "__
     //-------- 01234567890123456789---
     const char *StCaps[] = {"unlock", " lock"};
     const char *StEditMode[] = {"off", " on"};
@@ -409,24 +375,22 @@ void dispFnState()
     }
 }
 
-
 void dispInit()
 {
     M5Cardputer.Display.fillScreen(TFT_BLACK);
-    M5Cardputer.Display.setBrightness(70);
+    // M5Cardputer.Display.setBrightness(BRIGHT_NORMAL);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5Cardputer.Display.setCursor(0, 0);
 
-    //  L0 : software title and BLE connect inf -----------------
-    // dispBleState();
-
-    //  L1 :Battery Level ---------------------------------------
-    //-------------------"01234567890123456789"------------------;
-    const char *L1Str = "            bat.   %";
-    //-------------------"01234567890123456789"------------------;
+    //  L0 : software title -----------------
+    //-------------------01234567890123456789--
+    const char *L0Str = "- tiny usbKeyboard -";
+    //-------------------01234567890123456789--
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    dispLx(1, L1Str);
-    // dispBatteryLevel();
+    dispLx(0, L0Str);
+
+    //  L1 : software title -----------------
+    dispLx(1, "");
 
     //  L2 : Fn1 to Fn3 title -----------------------------------
     //-------------------"01234567890123456789"------------------;
@@ -457,58 +421,12 @@ void m5stack_begin()
     cfg.led_brightness = 0;
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Speaker.setVolume(0);
-    WiFi.mode(WIFI_OFF); // Ensure Wi-Fi is off
-
-    // --- Wakeup reason check ---
-    // wakeup_reason = esp_sleep_get_wakeup_cause();
 
 #ifdef DEBUG
     // vsCode terminal cannot get serial data
     //  of cardputer before 5 sec ...!
     delay(5000);
     Serial.println("\n\n*** m5stack begin ***");
-    // -----------------------------------------
-
-    // ----- Wakeup reason ---------
-    Serial.print("Wakeup cause: ");
-    switch (wakeup_reason)
-    {
-    case ESP_SLEEP_WAKEUP_EXT0:
-        Serial.println("External signal using RTC_IO (EXT0) - Likely BtnA (GPIO0)");
-        break;
-    case ESP_SLEEP_WAKEUP_EXT1:
-        Serial.println("External signal using RTC_CNTL (EXT1) - Likely Keyboard Matrix Key");
-        {
-            uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
-            Serial.printf("EXT1 wakeup triggered by pin mask: 0x%llX\n", wakeup_pin_mask);
-            const int rtc_pins_for_wakeup[] = {13, 15, 3, 4, 5, 6, 7}; // Defined in goDeepSleep
-            bool found_trigger_pin = false;
-            for (int pin : rtc_pins_for_wakeup)
-            {
-                if ((wakeup_pin_mask >> pin) & 1)
-                {
-                    Serial.printf("Wakeup detected on RTC GPIO %d\n", pin);
-                    found_trigger_pin = true;
-                }
-            }
-            if (!found_trigger_pin)
-                Serial.println("EXT1 wakeup, but no specific pin identified from the configured mask (check mask definition).");
-        }
-        break;
-    case ESP_SLEEP_WAKEUP_TIMER:
-        Serial.println("Timer");
-        break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD:
-        Serial.println("Touchpad");
-        break;
-    case ESP_SLEEP_WAKEUP_ULP:
-        Serial.println("ULP program");
-        break;
-    default:
-        Serial.printf("Not caused by deep sleep: %d\n", wakeup_reason);
-        break;
-    }
-    // --- End of wakeup reason ---
 #endif
 
     // Reduce power consumption by lowering CPU frequency (e.g., 80MHz)
@@ -533,7 +451,7 @@ void m5stack_begin()
 
     // display setup at startup
     M5Cardputer.Display.fillScreen(TFT_BLACK);
-    M5Cardputer.Display.setBrightness(70);
+    M5Cardputer.Display.setBrightness(BRIGHT_NORMAL);
     M5Cardputer.Display.setRotation(1);
     M5Cardputer.Display.setFont(&fonts::Font0);
     M5Cardputer.Display.setTextSize(2);
@@ -590,35 +508,3 @@ bool SD_begin()
     }
     return true;
 }
-
-void fnStateInit()
-{
-    // capsLock state is always 'false' start
-    capsLock = false;
-
-    // cursor movement mode state is recovered if waking up from DeepSleep
-    cursMode = false;
-}
-
-bool wrtNVS(const char *title, uint8_t data)
-{
-    if (ESP_OK == nvs_open(NVS_SETTING, NVS_READWRITE, &nvs))
-    {
-        nvs_set_u8(nvs, title, data); // Use title directly
-        nvs_close(nvs);
-        return true;
-    }
-    return false;
-}
-
-bool rdNVS(const char *title, uint8_t &data)
-{
-    if (ESP_OK == nvs_open(NVS_SETTING, NVS_READONLY, &nvs))
-    {
-        nvs_get_u8(nvs, title, &data); // Use title directly
-        nvs_close(nvs);
-        return true;
-    }
-    return false;
-}
-
