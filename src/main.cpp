@@ -30,6 +30,9 @@ void dispInit();
 void m5stack_begin();
 void SDU_lobby();
 bool SD_begin();
+void fnStateInit();
+void poserSave();
+void dispBatteryLevel();
 
 // ----- Cardputer Specific disp paramaters -----------
 const int32_t N_COLS = 20; // columns
@@ -42,8 +45,8 @@ static int32_t LINE0, LINE1, LINE2, LINE3, LINE4, LINE5;
 //-------------------------------------
 SPIClass SPI2;
 static bool SD_ENABLE;
-static bool capsLock = false; // fn + 1  : Cpas Lock On/Off
-static bool cursMode = false; // fn + 2  : cursor movement mode On/Off
+static bool capsLock; // fn + 1  : Cpas Lock On/Off
+static bool cursMode; // fn + 2  : cursor movement mode On/Off
 
 // --- hid key-code define ----
 const uint8_t HID_UPARROW = 0x52;
@@ -93,13 +96,12 @@ const std::map<uint8_t, uint8_t> generalNavigationMappings = {
 };
 // --------------------------------------
 
-const uint8_t BRIGHT_NORMAL = 70;        // LCD normal bright level
-const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report (excluding modifier keys)
-const int COL_CAPSLOCK = 1;              // "Cap" display start position
-const int COL_CURSORMODE = 10;           // "CurM" display start position
+unsigned long lastKeyInput = 0;   // last key input time
+const uint8_t BRIGHT_NORMAL = 70; // LCD normal bright level
+const uint8_t BRIGHT_LOW = 20;    // LCD low bright level
 
 USBHIDKeyboard usbKey;
-KeyReport usbKeyReport = {0};
+KeyReport usbKeyReport;
 
 void setup()
 {
@@ -111,9 +113,11 @@ void setup()
         SD.end();
     }
 
-    dispInit(); // display initialize
     USB.begin();
     usbKey.begin();
+    fnStateInit(); // function state initialize
+    dispInit();    // display initialize
+    lastKeyInput = millis();
 }
 
 void loop()
@@ -127,6 +131,7 @@ void loop()
             keySend(current_keys_state);        // send data via bluetooth
     }
 
+    poserSave(); // bat.status disp
     delay(5);
 }
 
@@ -144,6 +149,10 @@ bool checkInput(m5::Keyboard_Class::KeysState &current_keys_state)
             usbKey.releaseAll();
             dispModsCls();
         }
+    }
+    if (M5Cardputer.BtnA.wasPressed())
+    { // BtnG0 : instead name of Cardputer BtnA
+        lastKeyInput = millis();
     }
     return false;
 }
@@ -193,7 +202,7 @@ void keySend(const m5::Keyboard_Class::KeysState &current_keys)
     usbKeyReport = {0};
     String modsStr = "";
     uint8_t modifier = 0;
-    String localSendWord = ""; // Use local variable for constructing HID code string
+    String localSendWord = "";
 
     // ** modifiers keys(ctrl,shift,alt) and fn **
     //    these keys are used with other key
@@ -225,6 +234,8 @@ void keySend(const m5::Keyboard_Class::KeysState &current_keys)
 
     // *****  Regular Character Keys *****
     int count = 0;
+    const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report (excluding modifier keys)
+
     for (auto hidCode : current_keys.hid_keys)
     {
         char tempBuf[8]; // For " 0xYY" format
@@ -291,9 +302,9 @@ void dispLx(uint8_t Lx, const char *msg)
     //*********** Lx is (0 to N_ROWS - 1) *************************
     // -----01234567890123456789--------------------------
     // L0  "- tiny usbKeyborad -" : title
-    // L1                         :
-    // L2   fn1:Cap 2:CurM        : fn
-    // L3    unlock   off         :
+    // L1               bat.100%  : battery Status
+    // L2   fn1:Caps  fn2:CursMd  : 
+    // L3    unlock       off     : fn status
     // L4   Shift Ctrl Alt Opt    : modifiers keys
     // L5    X :hid 0x00          : sendKey and hidCode
     // -----01234567890123456789---------------------------
@@ -339,12 +350,14 @@ void dispSendKey2(const char *msg)
 
 void dispFnState()
 { // Line3 : fn1 to fn3 state display
-    //-------- 01234567890123456789---
-    //_____L2 "fn1:Cap 2:CurM      "__
-    //_____L3_" unlock   off       "__
-    //-------- 01234567890123456789---
+    //----- 01234567890123456789---
+    // L2  "fn1:Caps  fn2:CursMd"
+    // L3  " unlock       off   ":
+    //----- 01234567890123456789---
     const char *StCaps[] = {"unlock", " lock"};
     const char *StEditMode[] = {"off", " on"};
+    const int COL_CAPSLOCK = 1;    // "Caps" status start position
+    const int COL_CURSORMODE = 14; // "CursMd" status start position
 
     M5Cardputer.Display.fillRect(0, LINE3, X_WIDTH, H_CHR, TFT_BLACK);
 
@@ -361,7 +374,7 @@ void dispFnState()
         M5Cardputer.Display.print(StCaps[0]);
     }
 
-    // Cursor movement mode state
+    // Cursor Movement mode state
     M5Cardputer.Display.setCursor(W_CHR * COL_CURSORMODE, LINE3);
     if (cursMode)
     {
@@ -378,34 +391,45 @@ void dispFnState()
 void dispInit()
 {
     M5Cardputer.Display.fillScreen(TFT_BLACK);
-    // M5Cardputer.Display.setBrightness(BRIGHT_NORMAL);
+    M5Cardputer.Display.setBrightness(BRIGHT_NORMAL);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5Cardputer.Display.setCursor(0, 0);
 
     //  L0 : software title -----------------
-    //-------------------01234567890123456789--
-    const char *L0Str = "- tiny usbKeyboard -";
-    //-------------------01234567890123456789--
+    //--01234567890123456789--
+    // "- tiny usbKeyboard -";
+    //--01234567890123456789--
+    M5Cardputer.Display.fillRect(0, LINE0, X_WIDTH, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.setCursor(0, LINE0);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-    dispLx(0, L0Str);
+    M5Cardputer.Display.print("- tiny ");
+    M5Cardputer.Display.setTextColor(TFT_SKYBLUE, TFT_BLACK);
+    M5Cardputer.Display.print("usb");
+    M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    M5Cardputer.Display.print("Keyboard -");
 
-    //  L1 : software title -----------------
-    dispLx(1, "");
+    //  L1 :Battery Level ---------------------------------------
+    //-------------------"01234567890123456789"------------------;
+    const char *L1Str = "            bat.   %";
+    //-------------------"01234567890123456789"------------------;
+    M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+    dispLx(1, L1Str);
+    dispBatteryLevel();
 
     //  L2 : Fn1 to Fn3 title -----------------------------------
-    //-------------------"01234567890123456789"------------------;
-    //           L2Str = "fn1:Cap 2:CurM 3:Apo";
-    //-------------------"01234567890123456789"------------------;
+    //--------"01234567890123456789"------------------;
+    // L2Str ="fn1:Caps  fn2:CursMd"   : fn
+    //--------"01234567890123456789"------------------;
     M5Cardputer.Display.setCursor(0, LINE2);
     M5Cardputer.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
     M5Cardputer.Display.print("fn1:");
     M5Cardputer.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5Cardputer.Display.print("Cap ");
+    M5Cardputer.Display.print("Caps  ");
 
     M5Cardputer.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
-    M5Cardputer.Display.print("2:");
+    M5Cardputer.Display.print("fn2:");
     M5Cardputer.Display.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5Cardputer.Display.print("CurM ");
+    M5Cardputer.Display.print("CursMd");
 
     // L3 : Fn1 to Fn3 state disp --------------------------------
     dispFnState();
@@ -507,4 +531,75 @@ bool SD_begin()
         return false;
     }
     return true;
+}
+
+void fnStateInit()
+{
+    // capsLock state is always 'false' start
+    capsLock = false;
+    // cursor movement mode state is recovered if waking up from DeepSleep
+    cursMode = false;
+}
+
+enum PowerSaveFSM
+{
+    PS_NORMAL,
+    PS_LOW_BRIGHT,
+};
+static PowerSaveFSM psState = PS_NORMAL;
+
+
+static unsigned long prev_btlvl_disp_tm = 0L;  // previous battery disp time
+
+void poserSave()
+{
+    const unsigned long BATLVL_DISP_INTERVAL_MS = 5 * 1000UL;
+    const unsigned long LOW_BRIGHT_TIMEOUT_MS = 3 * 60 * 1000UL; // 3 min
+    unsigned long currentTime = millis();                        // Get current time once
+    unsigned long timeSinceLastInput = currentTime - lastKeyInput;
+
+    if (currentTime > prev_btlvl_disp_tm + BATLVL_DISP_INTERVAL_MS)
+    {
+        prev_btlvl_disp_tm = currentTime;
+        dispBatteryLevel();
+    }
+
+    if (timeSinceLastInput < LOW_BRIGHT_TIMEOUT_MS)
+    { // Still within normal active period
+        if (psState != PS_NORMAL)
+        {
+            // If returning to normal from any other state (low bright, APO warn)
+            psState = PS_NORMAL;
+            dispInit(); // Restore full display, normal brightness, and clear any previous warnings
+        }
+        return;
+    }
+
+    // LOW_BRIGHT_TIMEOUT_MS has passed.
+    // Proceed with dimming, warning, and sleeping logic.
+    if (psState == PS_NORMAL)
+    {
+        // Transition from Normal to Low Bright as LOW_BRIGHT_TIMEOUT_MS has passed and APO is on
+        psState = PS_LOW_BRIGHT;
+        M5Cardputer.Display.setBrightness(BRIGHT_LOW);
+    }
+}
+
+void dispBatteryLevel()
+{
+    // Line1 : battery level display
+    //---- 01234567890123456789---
+    // L1_"            bat.100%"--
+    //---- 01234567890123456789---
+    const int COL_BATVAL = 16;      // Battery value display start position
+    const int WIDTH_BATVAL_LEN = 3; // Battery value display length
+
+    M5Cardputer.Display.fillRect(W_CHR * COL_BATVAL, LINE1, W_CHR * WIDTH_BATVAL_LEN, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.setCursor(W_CHR * COL_BATVAL, LINE1);
+    M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    uint8_t batLvl = (uint8_t)M5.Power.getBatteryLevel();  // Get battery level
+    char batLvlBuf[4];                                     // Buffer for "XXX" + null terminator
+    snprintf(batLvlBuf, sizeof(batLvlBuf), "%3u", batLvl); // %3u pads with spaces if less than 3 digits
+    M5Cardputer.Display.print(batLvlBuf);
 }
