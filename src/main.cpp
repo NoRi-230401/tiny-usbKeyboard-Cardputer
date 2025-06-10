@@ -1,6 +1,6 @@
 // --------------------------------------------------------
 //  *** tiny usbKeyboard ***     by NoRi
-//  bluetooth keyboard software for Cardputer
+//  USB keyboard software for Cardputer
 //   2025-06-08  v104
 // https://github.com/NoRi-230401/tiny-usbKeyboard-Cardputer
 //  MIT License
@@ -11,8 +11,6 @@
 #include <USBHIDKeyboard.h>
 #include <M5Cardputer.h>
 #include <M5StackUpdater.h>
-#include <algorithm>
-#include <string>
 #include <map>
 
 void setup();
@@ -31,7 +29,7 @@ void m5stack_begin();
 void SDU_lobby();
 bool SD_begin();
 void fnStateInit();
-void poserSave();
+void powerSave();
 void dispBatteryLevel();
 
 // ----- Cardputer Specific disp paramaters -----------
@@ -43,7 +41,7 @@ static int32_t W_CHR, H_CHR;
 static int32_t LINE0, LINE1, LINE2, LINE3, LINE4, LINE5;
 
 //-------------------------------------
-SPIClass SPI2;
+static SPIClass SPI2;
 static bool SD_ENABLE;
 static bool capsLock; // fn + 1  : Cpas Lock On/Off
 static bool cursMode; // fn + 2  : cursor movement mode On/Off
@@ -128,10 +126,10 @@ void loop()
     if (checkInput(current_keys_state))         // check Cardputer key input and get state
     {                                           // if keys input
         if (!specialFnMode(current_keys_state)) // special function mode check
-            keySend(current_keys_state);        // send data via bluetooth
+            keySend(current_keys_state);        // send data via USB
     }
 
-    poserSave(); // bat.status disp
+    powerSave(); // bat.lvl disp and dimming
     delay(5);
 }
 
@@ -139,6 +137,7 @@ bool checkInput(m5::Keyboard_Class::KeysState &current_keys_state)
 { // check Cardputer key input
     if (M5Cardputer.Keyboard.isChange())
     {
+        lastKeyInput = millis();
         if (M5Cardputer.Keyboard.isPressed())
         {
             current_keys_state = M5Cardputer.Keyboard.keysState();
@@ -162,7 +161,6 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
     // return true: special function executed , false: not exectuted
 
     //  --- input keys status setup  -------------------------
-    uint8_t mods = current_keys.modifiers;
     bool existWord = !current_keys.word.empty();
     uint8_t keyWord = 0;
     if (existWord)
@@ -200,47 +198,55 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
 void keySend(const m5::Keyboard_Class::KeysState &current_keys)
 {
     usbKeyReport = {0};
-    String modsStr = "";
     uint8_t modifier = 0;
-    String localSendWord = "";
-
+    char modsStr[30] = "";       // Buffer for modifier keys string
+    char localSendWord[40] = ""; // Buffer for HID codes string, stores " 0xYY 0xZZ..."
+    size_t modsStrLen = 0;
     // ** modifiers keys(ctrl,shift,alt) and fn **
     //    these keys are used with other key
     if (current_keys.ctrl)
     {
         modifier |= 0x01;
-        modsStr += "Ctrl ";
+        strncat(modsStr, "Ctrl ", sizeof(modsStr) - modsStrLen - 1);
+        modsStrLen += strlen("Ctrl ");
     }
     if (current_keys.shift)
     {
         modifier |= 0x02;
-        modsStr += "Shift ";
+        strncat(modsStr, "Shift ", sizeof(modsStr) - modsStrLen - 1);
+        modsStrLen += strlen("Shift ");
     }
     if (current_keys.alt)
     {
         modifier |= 0x04;
-        modsStr += "Alt ";
+        strncat(modsStr, "Alt ", sizeof(modsStr) - modsStrLen - 1);
+        modsStrLen += strlen("Alt ");
     }
     if (current_keys.opt)
     {
         modifier |= 0x08;
-        modsStr += "Opt ";
+        strncat(modsStr, "Opt ", sizeof(modsStr) - modsStrLen - 1);
+        modsStrLen += strlen("Opt ");
     }
     if (current_keys.fn)
-        modsStr += "Fn ";
+    {
+        strncat(modsStr, "Fn ", sizeof(modsStr) - modsStrLen - 1);
+        modsStrLen += strlen("Fn ");
+    }
 
     usbKeyReport.modifiers = modifier;
-    dispModsKeys(modsStr.c_str());
+    dispModsKeys(modsStr);
 
     // *****  Regular Character Keys *****
     int count = 0;
-    const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report (excluding modifier keys)
+    const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report
+    size_t localSendWordLen = 0;             // Initialize length for localSendWord
 
     for (auto hidCode : current_keys.hid_keys)
     {
-        char tempBuf[8]; // For " 0xYY" format
         if (count < MAX_SIMULTANEOUS_KEYS)
         {
+            char tempBuf[8]; // For " 0xYY" format, e.g., " 0x1A"
             uint8_t finalHidCode = hidCode;
 
             if (current_keys.fn)
@@ -269,8 +275,13 @@ void keySend(const m5::Keyboard_Class::KeysState &current_keys)
                 }
             }
             usbKeyReport.keys[count] = finalHidCode;
-            snprintf(tempBuf, sizeof(tempBuf), " 0x%02X", finalHidCode);
-            localSendWord += tempBuf;
+            int written = snprintf(tempBuf, sizeof(tempBuf), " 0x%02X", finalHidCode);
+            // Check if the new string (current + tempBuf + null terminator) will fit
+            if (written > 0 && (localSendWordLen + (size_t)written < sizeof(localSendWord)))
+            {
+                strncat(localSendWord, tempBuf, sizeof(localSendWord) - localSendWordLen - 1);
+                localSendWordLen += (size_t)written;
+            }
             count++;
         }
     }
@@ -278,22 +289,31 @@ void keySend(const m5::Keyboard_Class::KeysState &current_keys)
     // Send keyReport via USB
     usbKey.sendReport(&usbKeyReport);
 
-    String keysDisplayString = "";
+    char keysDisplayString[N_COLS + 1 + 40] = ""; // Buffer for the final display string
+    size_t keysDisplayStringLen = 0;
+
     if (!current_keys.word.empty())
     {
-        keysDisplayString += " ";
-        keysDisplayString += current_keys.word[0];
-        keysDisplayString += " :hid";
+        snprintf(keysDisplayString, sizeof(keysDisplayString), " %c :hid", current_keys.word[0]);
+        keysDisplayStringLen = strlen(keysDisplayString);
     }
-    else if (!localSendWord.isEmpty())
+    else if (strlen(localSendWord) > 0)
     {
-        keysDisplayString += " hid";
+        snprintf(keysDisplayString, sizeof(keysDisplayString), " hid");
+        keysDisplayStringLen = strlen(keysDisplayString);
     }
-    keysDisplayString += localSendWord;
 
-    if (!keysDisplayString.isEmpty())
+    // Append localSendWord (HID codes) if there's content and space
+    if (strlen(localSendWord) > 0)
     {
-        dispSendKey(keysDisplayString.c_str());
+        if (keysDisplayStringLen + strlen(localSendWord) < sizeof(keysDisplayString))
+        {
+            strncat(keysDisplayString, localSendWord, sizeof(keysDisplayString) - keysDisplayStringLen - 1);
+        }
+    }
+    if (strlen(keysDisplayString) > 0)
+    {
+        dispSendKey(keysDisplayString);
     }
 }
 
@@ -303,7 +323,7 @@ void dispLx(uint8_t Lx, const char *msg)
     // -----01234567890123456789--------------------------
     // L0  "- tiny usbKeyborad -" : title
     // L1               bat.100%  : battery Status
-    // L2   fn1:Caps  fn2:CursMd  : 
+    // L2   fn1:Caps  fn2:CursMd  :
     // L3    unlock       off     : fn status
     // L4   Shift Ctrl Alt Opt    : modifiers keys
     // L5    X :hid 0x00          : sendKey and hidCode
@@ -324,7 +344,6 @@ void dispModsKeys(const char *msg)
 
 void dispModsCls()
 { // line4 : modifiers keys disp clear
-    // dispLx(4, "");
     M5Cardputer.Display.fillRect(0, LINE4, X_WIDTH, H_CHR, TFT_BLACK);
 }
 
@@ -499,7 +518,7 @@ void m5stack_begin()
 // ------------------------------------------------------------------------
 // load '/menu.bin' on SD, if key'a' pressed at booting.
 // 'menu.bin' for Cardputer is involved in BINS folder at this github site
-// https://github.com/NoRi-230401/tiny-bleKeyboard-Cardputer
+// https://github.com/NoRi-230401/tiny-usbKeyboard-Cardputer
 //
 // ------------------------------------------------------------------------
 // ** M5Stack-SD-Updater is launcher software for m5stak by tobozo **
@@ -548,17 +567,17 @@ enum PowerSaveFSM
 };
 static PowerSaveFSM psState = PS_NORMAL;
 
+static unsigned long prev_btlvl_disp_tm = 0L; // previous battery disp time
 
-static unsigned long prev_btlvl_disp_tm = 0L;  // previous battery disp time
-
-void poserSave()
+void powerSave()
 {
     const unsigned long BATLVL_DISP_INTERVAL_MS = 5 * 1000UL;
     const unsigned long LOW_BRIGHT_TIMEOUT_MS = 3 * 60 * 1000UL; // 3 min
     unsigned long currentTime = millis();                        // Get current time once
     unsigned long timeSinceLastInput = currentTime - lastKeyInput;
 
-    if (currentTime > prev_btlvl_disp_tm + BATLVL_DISP_INTERVAL_MS)
+    // Check if it's time to update battery level display (handles millis() overflow)
+    if (currentTime - prev_btlvl_disp_tm >= BATLVL_DISP_INTERVAL_MS)
     {
         prev_btlvl_disp_tm = currentTime;
         dispBatteryLevel();
@@ -576,10 +595,10 @@ void poserSave()
     }
 
     // LOW_BRIGHT_TIMEOUT_MS has passed.
-    // Proceed with dimming, warning, and sleeping logic.
+    // Proceed with dimming
     if (psState == PS_NORMAL)
     {
-        // Transition from Normal to Low Bright as LOW_BRIGHT_TIMEOUT_MS has passed and APO is on
+        // Transition from Normal to Low Bright
         psState = PS_LOW_BRIGHT;
         M5Cardputer.Display.setBrightness(BRIGHT_LOW);
     }
