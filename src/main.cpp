@@ -1,7 +1,7 @@
 // --------------------------------------------------------
 //  *** tiny usbKeyboard ***     by NoRi
 //  USB keyboard software for Cardputer
-//   2025-06-08  v104
+//   2025-06-10  v104
 // https://github.com/NoRi-230401/tiny-usbKeyboard-Cardputer
 //  MIT License
 // --------------------------------------------------------
@@ -556,7 +556,7 @@ void fnStateInit()
 {
     // capsLock state is always 'false' start
     capsLock = false;
-    // cursor movement mode state is recovered if waking up from DeepSleep
+    // cursor movement mode state is always 'false' start
     cursMode = false;
 }
 

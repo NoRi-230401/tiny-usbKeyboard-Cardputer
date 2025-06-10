@@ -1,7 +1,7 @@
 # tiny-usbKeyboard-Cardputer
 **[`　English　`](README.md)**
 
-# Cardputer用 USBキーボード 取扱説明書
+# Cardputer用 USBキーボード 説明書
 
 ## 0. 変更履歴
 
@@ -33,7 +33,6 @@
 
 ### 2.1. 接続と　起動
 Cardputerの電源をOFF状態のまま、USBケーブルでホストデバイス（PC、スマートホン）と繋ぐと自動的に電源が入りソフトが起動します。すぐにホストデバイスのキーボードとして使用することができます。
-もし、USBの接続がうまくいかなかった場合には、リセット・ボタンを押してみてください。
 
 ### 2.2. 画面表示レイアウト
 画面は6行で構成され、以下の情報が表示されます。
@@ -98,7 +97,7 @@ Cardputerのキーを押すと、対応する文字またはHIDコードがUSB�
 | `Fn` + `]`    | Page Down        | `0x4E`         |
 
 
-![新規に割り当てたKEYS](images/03a-cardputer-gazo.jpg)<br>
+![新規に割り当てたKEYS](images/03a-USB-cardputer-gazp.jpg)<br>
 ＊新規割当キー（`fn` + KEY ）
 
 
@@ -120,7 +119,7 @@ Cardputerのキーを押すと、対応する文字またはHIDコードがUSB�
 -   画面L3に `on` (有効) または `off` (無効) と表示されます。
 
 
-![カーソル移動モード時の割当キー](images/04a-cardputer-gazo.jpg)<br>
+![カーソル移動モード時の割当キー](images/04a-USB-cardputer-gazp.jpg)<br>
 ＊カーソル移動モード時の割当キー
 
 
@@ -129,8 +128,8 @@ Cardputerのキーを押すと、対応する文字またはHIDコードがUSB�
 ファームウエアの書込みには、次の２つの方法があります。
 
 ### 5.1. M5Burner
-`M5Burner`でオンラインでファームウエア書込みができます。
-ソフトをインストール後に起動して画面の左側の機種は`CARDPUTER`を指定し、`tiny-usbKeyboard` を選んでファームウエアの書込みをしてください。
+`M5Burner`ソフトを使うとPCからオンラインのデータでファームウエア書込みができます。
+`M5Burner`ソフトをインストール、起動して画面の左側の機種には、`CARDPUTER`を指定し、`tiny-usbKeyboard` を選んでから指示に従いファームウエアの書込みをしてください。
 
 ### 5.2. vsCode + PlatformIO
 1. PCに vsCode + PlatformIO の開発環境を用意します。
@@ -177,10 +176,13 @@ M5Launcher Cardputer v2.3.10で確認しました。
 
 ## 8. その他
 
-### Bluetooth版ソフト紹介
-Bluetooth版 `tiny-bleKeyboard` もあります。Launcherソフトを使用してアプリを素早く切替えることができますので、必要な時にサクット使えるので結構便利です。
+### 　USBの接続がうまくいかない場合
+ホストデバイスとUSBの接続がうまくいかなかった場合には、リセット・ボタンを押して再起動してみてください。
 
-・[tiny-bleKeyboard-Cardputer：Bluetooth版](https://github.com/NoRi-230401/tiny-bleKeyboard-Cardputer)
+### Bluetooth版ソフト紹介
+本ソフトと同じキー配列で Bluetooth版 `tiny-bleKeyboard` のソフトもあります。どちらもLauncherソフトで素早く切替えて使用することができますので便利です。
+
+・[tiny-bleKeyboard-Cardputer：Bluetooth版キーボード](https://github.com/NoRi-230401/tiny-bleKeyboard-Cardputer)
 
 
 ## 9. Links
@@ -198,7 +200,6 @@ Bluetooth版 `tiny-bleKeyboard` もあります。Launcherソフトを使用し�
 
 ・[日本語ドライバで英語キーボードを使用：MAST DESIGNさん](https://mastdesign.me/20240107-jiskeyboard-uskeyboard/)
 
-最初は、日英両方のキーボード・ドライバでもできるように試みていたのですが挫折。最初からこれを使えばよかったんだ。
 
 ・[HID Key Code：おなかすいたwiki](https://wiki.onakasuita.org/pukiwiki/?HID%2F%E3%82%AD%E3%83%BC%E3%82%B3%E3%83%BC%E3%83%89)
 
