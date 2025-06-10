@@ -67,7 +67,9 @@ When a key on the Cardputer is pressed, the corresponding character or HID code 
 
 ### 4.3. Combinations with Fn Key
 
-By pressing the `Fn` key along with the following keys, specific HID codes are sent.
+-   By pressing the `Fn` key along with the following keys, specific HID codes are sent.
+-   Some of the keys have orange printing on the upper of them, and some are newly assigned keys.
+
 
 | Fn + Key  | Function         | HID Code       |
 | :-------- | :--------------- | :------------- |
