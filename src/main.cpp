@@ -10,9 +10,13 @@
 #include <M5Cardputer.h>
 #include <M5StackUpdater.h>
 #include <map>
+#include <WiFi.h> // Added for WiFi.mode(WIFI_OFF)
+using std::string;
+
+//----- `usbKeyboad` only (no `bleKeyboad`) -----------------
 #include <USB.h>
 #include <USBHIDKeyboard.h>
-using std::string;
+// -----------------------------------------------------------
 
 void setup();
 void loop();
@@ -37,9 +41,9 @@ void dispBatteryLevel();
 const int32_t N_COLS = 20; // columns
 const int32_t N_ROWS = 6;  // rows
 //---- caluculated in m5stackc_begin() ----------------
-static int32_t X_WIDTH, Y_HEIGHT;    // Screen dimensions
-static int32_t W_CHR, H_CHR;         // Character dimensions
-static int32_t SC_LINES[N_ROWS]; // Array to store Y coordinates of each line
+static int32_t X_WIDTH, Y_HEIGHT; // Screen dimensions
+static int32_t W_CHR, H_CHR;      // Character dimensions
+static int32_t SC_LINES[N_ROWS];  // Array to store Y coordinates of each line
 
 //-------------------------------------
 static SPIClass SPI2;
@@ -450,6 +454,7 @@ void m5stack_begin()
     cfg.led_brightness = 0;
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Speaker.setVolume(0);
+    WiFi.mode(WIFI_OFF); // Ensure Wi-Fi is off
 
 #ifdef DEBUG
     // vsCode terminal cannot get serial data
