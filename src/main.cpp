@@ -7,11 +7,12 @@
 // --------------------------------------------------------
 #include <Arduino.h>
 #include <SD.h>
-#include <USB.h>
-#include <USBHIDKeyboard.h>
 #include <M5Cardputer.h>
 #include <M5StackUpdater.h>
 #include <map>
+#include <USB.h>
+#include <USBHIDKeyboard.h>
+using std::string;
 
 void setup();
 void loop();
@@ -36,9 +37,9 @@ void dispBatteryLevel();
 const int32_t N_COLS = 20; // columns
 const int32_t N_ROWS = 6;  // rows
 //---- caluculated in m5stackc_begin() ----------------
-static int32_t X_WIDTH, Y_HEIGHT;
-static int32_t W_CHR, H_CHR;
-static int32_t LINE0, LINE1, LINE2, LINE3, LINE4, LINE5;
+static int32_t X_WIDTH, Y_HEIGHT;    // Screen dimensions
+static int32_t W_CHR, H_CHR;         // Character dimensions
+static int32_t SC_LINES[N_ROWS]; // Array to store Y coordinates of each line
 
 //-------------------------------------
 static SPIClass SPI2;
@@ -98,8 +99,8 @@ unsigned long lastKeyInput = 0;   // last key input time
 const uint8_t BRIGHT_NORMAL = 70; // LCD normal bright level
 const uint8_t BRIGHT_LOW = 20;    // LCD low bright level
 
-USBHIDKeyboard usbKey;
-KeyReport usbKeyReport;
+USBHIDKeyboard txKey;
+KeyReport txKeyReport;
 
 void setup()
 {
@@ -112,7 +113,7 @@ void setup()
     }
 
     USB.begin();
-    usbKey.begin();
+    txKey.begin();
     fnStateInit(); // function state initialize
     dispInit();    // display initialize
     lastKeyInput = millis();
@@ -145,7 +146,7 @@ bool checkInput(m5::Keyboard_Class::KeysState &current_keys_state)
         }
         else // All keys are physically released
         {
-            usbKey.releaseAll();
+            txKey.releaseAll();
             dispModsCls();
         }
     }
@@ -175,7 +176,7 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
         case '!': // Caps Lock Toggle (fn + '1')
             specialFnProcessed = true;
             capsLock = !capsLock;
-            usbKey.write(KEY_CAPS_LOCK);
+            txKey.write(KEY_CAPS_LOCK);
             break;
         case '2':
         case '@': // Cursor movement Mode Toggle (fn + '2')
@@ -187,8 +188,8 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
         if (specialFnProcessed)
         {
             dispFnState();
-            usbKey.releaseAll(); // Release all keys/modifiers on the host side
-            dispModsCls();       // Clear modifier key display on the Cardputer side
+            txKey.releaseAll(); // Release all keys/modifiers on the host side
+            dispModsCls();      // Clear modifier key display on the Cardputer side
             return true;
         }
     }
@@ -197,50 +198,44 @@ bool specialFnMode(const m5::Keyboard_Class::KeysState &current_keys)
 
 void keySend(const m5::Keyboard_Class::KeysState &current_keys)
 {
-    usbKeyReport = {0};
+    txKeyReport = {0};
     uint8_t modifier = 0;
-    char modsStr[30] = "";       // Buffer for modifier keys string
-    char localSendWord[40] = ""; // Buffer for HID codes string, stores " 0xYY 0xZZ..."
-    size_t modsStrLen = 0;
+    string modsStr;    // Buffer for modifier keys string
+    string hidCodeStr; // Buffer for HID codes string, stores " 0xYY 0xZZ..."
+
     // ** modifiers keys(ctrl,shift,alt) and fn **
     //    these keys are used with other key
     if (current_keys.ctrl)
     {
         modifier |= 0x01;
-        strncat(modsStr, "Ctrl ", sizeof(modsStr) - modsStrLen - 1);
-        modsStrLen += strlen("Ctrl ");
+        modsStr += "Ctrl ";
     }
     if (current_keys.shift)
     {
         modifier |= 0x02;
-        strncat(modsStr, "Shift ", sizeof(modsStr) - modsStrLen - 1);
-        modsStrLen += strlen("Shift ");
+        modsStr += "Shift ";
     }
     if (current_keys.alt)
     {
         modifier |= 0x04;
-        strncat(modsStr, "Alt ", sizeof(modsStr) - modsStrLen - 1);
-        modsStrLen += strlen("Alt ");
+        modsStr += "Alt ";
     }
     if (current_keys.opt)
     {
         modifier |= 0x08;
-        strncat(modsStr, "Opt ", sizeof(modsStr) - modsStrLen - 1);
-        modsStrLen += strlen("Opt ");
+        modsStr += "Opt ";
     }
     if (current_keys.fn)
     {
-        strncat(modsStr, "Fn ", sizeof(modsStr) - modsStrLen - 1);
-        modsStrLen += strlen("Fn ");
+        modsStr += "Fn ";
     }
 
-    usbKeyReport.modifiers = modifier;
-    dispModsKeys(modsStr);
+    txKeyReport.modifiers = modifier;
+    dispModsKeys(modsStr.c_str());
 
     // *****  Regular Character Keys *****
     int count = 0;
     const uint8_t MAX_SIMULTANEOUS_KEYS = 6; // Max number of keys in HID report
-    size_t localSendWordLen = 0;             // Initialize length for localSendWord
 
     for (auto hidCode : current_keys.hid_keys)
     {
@@ -274,46 +269,37 @@ void keySend(const m5::Keyboard_Class::KeysState &current_keys)
                     finalHidCode = it_general->second;
                 }
             }
-            usbKeyReport.keys[count] = finalHidCode;
+            txKeyReport.keys[count] = finalHidCode;
             int written = snprintf(tempBuf, sizeof(tempBuf), " 0x%02X", finalHidCode);
-            // Check if the new string (current + tempBuf + null terminator) will fit
-            if (written > 0 && (localSendWordLen + (size_t)written < sizeof(localSendWord)))
+            if (written > 0) // For std::string, just check if snprintf was successful
             {
-                strncat(localSendWord, tempBuf, sizeof(localSendWord) - localSendWordLen - 1);
-                localSendWordLen += (size_t)written;
+                hidCodeStr += tempBuf;
             }
             count++;
         }
     }
 
-    // Send keyReport via USB
-    usbKey.sendReport(&usbKeyReport);
+    // Send keyReport to host device
+    txKey.sendReport(&txKeyReport);
 
-    char keysDisplayString[N_COLS + 1 + 40] = ""; // Buffer for the final display string
-    size_t keysDisplayStringLen = 0;
-
+    string keysDisplayString;
     if (!current_keys.word.empty())
     {
-        snprintf(keysDisplayString, sizeof(keysDisplayString), " %c :hid", current_keys.word[0]);
-        keysDisplayStringLen = strlen(keysDisplayString);
+        keysDisplayString = " " + string(1, current_keys.word[0]) + " :hid";
     }
-    else if (strlen(localSendWord) > 0)
+    else if (!hidCodeStr.empty())
     {
-        snprintf(keysDisplayString, sizeof(keysDisplayString), " hid");
-        keysDisplayStringLen = strlen(keysDisplayString);
+        keysDisplayString = " hid";
     }
 
-    // Append localSendWord (HID codes) if there's content and space
-    if (strlen(localSendWord) > 0)
+    // Append hidCodeStr (HID codes) if there's content and space
+    if (!hidCodeStr.empty())
     {
-        if (keysDisplayStringLen + strlen(localSendWord) < sizeof(keysDisplayString))
-        {
-            strncat(keysDisplayString, localSendWord, sizeof(keysDisplayString) - keysDisplayStringLen - 1);
-        }
+        keysDisplayString += hidCodeStr;
     }
-    if (strlen(keysDisplayString) > 0)
+    if (!keysDisplayString.empty())
     {
-        dispSendKey(keysDisplayString);
+        dispSendKey(keysDisplayString.c_str());
     }
 }
 
@@ -332,8 +318,8 @@ void dispLx(uint8_t Lx, const char *msg)
     if (Lx >= N_ROWS)
         return;
 
-    M5Cardputer.Display.fillRect(0, Lx * H_CHR, X_WIDTH, H_CHR, TFT_BLACK);
-    M5Cardputer.Display.setCursor(0, Lx * H_CHR);
+    M5Cardputer.Display.fillRect(0, SC_LINES[Lx], X_WIDTH, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.setCursor(0, SC_LINES[Lx]);
     M5Cardputer.Display.print(msg);
 }
 
@@ -344,7 +330,7 @@ void dispModsKeys(const char *msg)
 
 void dispModsCls()
 { // line4 : modifiers keys disp clear
-    M5Cardputer.Display.fillRect(0, LINE4, X_WIDTH, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.fillRect(0, SC_LINES[4], X_WIDTH, H_CHR, TFT_BLACK);
 }
 
 void dispSendKey(const char *msg)
@@ -359,11 +345,11 @@ void dispSendKey(const char *msg)
 void dispSendKey2(const char *msg)
 { // line5 : other keys (enter,tab,backspace, etc ...) send info
     M5Cardputer.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
-    char buffer[N_COLS + 1]; // Ensure buffer is large enough
-    snprintf(buffer, sizeof(buffer), " %s", msg);
-    dispLx(5, buffer);
+    string temp_str = " ";
+    temp_str += msg;
+    dispLx(5, temp_str.c_str());
 #ifdef DEBUG
-    Serial.println(msg);
+    Serial.println(msg); // msg is already const char*
 #endif
 }
 
@@ -378,10 +364,10 @@ void dispFnState()
     const int COL_CAPSLOCK = 1;    // "Caps" status start position
     const int COL_CURSORMODE = 14; // "CursMd" status start position
 
-    M5Cardputer.Display.fillRect(0, LINE3, X_WIDTH, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.fillRect(0, SC_LINES[3], X_WIDTH, H_CHR, TFT_BLACK);
 
     // capsLock state
-    M5Cardputer.Display.setCursor(W_CHR * COL_CAPSLOCK, LINE3);
+    M5Cardputer.Display.setCursor(W_CHR * COL_CAPSLOCK, SC_LINES[3]);
     if (capsLock)
     {
         M5Cardputer.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -394,7 +380,7 @@ void dispFnState()
     }
 
     // Cursor Movement mode state
-    M5Cardputer.Display.setCursor(W_CHR * COL_CURSORMODE, LINE3);
+    M5Cardputer.Display.setCursor(W_CHR * COL_CURSORMODE, SC_LINES[3]);
     if (cursMode)
     {
         M5Cardputer.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -418,8 +404,8 @@ void dispInit()
     //--01234567890123456789--
     // "- tiny usbKeyboard -";
     //--01234567890123456789--
-    M5Cardputer.Display.fillRect(0, LINE0, X_WIDTH, H_CHR, TFT_BLACK);
-    M5Cardputer.Display.setCursor(0, LINE0);
+    M5Cardputer.Display.fillRect(0, SC_LINES[0], X_WIDTH, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.setCursor(0, SC_LINES[0]);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
     M5Cardputer.Display.print("- tiny ");
     M5Cardputer.Display.setTextColor(TFT_SKYBLUE, TFT_BLACK);
@@ -439,7 +425,7 @@ void dispInit()
     //--------"01234567890123456789"------------------;
     // L2Str ="fn1:Caps  fn2:CursMd"   : fn
     //--------"01234567890123456789"------------------;
-    M5Cardputer.Display.setCursor(0, LINE2);
+    M5Cardputer.Display.setCursor(0, SC_LINES[2]);
     M5Cardputer.Display.setTextColor(TFT_ORANGE, TFT_BLACK);
     M5Cardputer.Display.print("fn1:");
     M5Cardputer.Display.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -485,12 +471,10 @@ void m5stack_begin()
     Y_HEIGHT = M5Cardputer.Display.height();
     W_CHR = X_WIDTH / N_COLS;  // width of 1 character
     H_CHR = Y_HEIGHT / N_ROWS; // height of 1 character
-    LINE0 = 0 * H_CHR;
-    LINE1 = 1 * H_CHR;
-    LINE2 = 2 * H_CHR;
-    LINE3 = 3 * H_CHR;
-    LINE4 = 4 * H_CHR;
-    LINE5 = 5 * H_CHR;
+    for (int i = 0; i < N_ROWS; ++i)
+    {
+        SC_LINES[i] = i * H_CHR;
+    }
 
     // display setup at startup
     M5Cardputer.Display.fillScreen(TFT_BLACK);
@@ -537,19 +521,17 @@ void SDU_lobby()
 
 bool SD_begin()
 {
-    int i = 0;
-    while (!SD.begin(M5.getPin(m5::pin_name_t::sd_spi_ss), SPI2) && i < 10)
+    for (int i = 0; i < 10; ++i)
     {
+        if (SD.begin(M5.getPin(m5::pin_name_t::sd_spi_ss), SPI2))
+        {
+            return true; // Success
+        }
         delay(500);
-        i++;
     }
-    if (i >= 10)
-    {
-        Serial.println("ERR: SD begin fail...");
-        SD.end();
-        return false;
-    }
-    return true;
+    Serial.println("ERR: SD begin fail...");
+    SD.end();
+    return false; // Failed after retries
 }
 
 void fnStateInit()
@@ -589,7 +571,8 @@ void powerSave()
         {
             // If returning to normal from any other state (low bright, APO warn)
             psState = PS_NORMAL;
-            dispInit(); // Restore full display, normal brightness, and clear any previous warnings
+            // dispInit(); // Restore full display, normal brightness, and clear any previous warnings
+            M5Cardputer.Display.setBrightness(BRIGHT_NORMAL);
         }
         return;
     }
@@ -613,8 +596,8 @@ void dispBatteryLevel()
     const int COL_BATVAL = 16;      // Battery value display start position
     const int WIDTH_BATVAL_LEN = 3; // Battery value display length
 
-    M5Cardputer.Display.fillRect(W_CHR * COL_BATVAL, LINE1, W_CHR * WIDTH_BATVAL_LEN, H_CHR, TFT_BLACK);
-    M5Cardputer.Display.setCursor(W_CHR * COL_BATVAL, LINE1);
+    M5Cardputer.Display.fillRect(W_CHR * COL_BATVAL, SC_LINES[1], W_CHR * WIDTH_BATVAL_LEN, H_CHR, TFT_BLACK);
+    M5Cardputer.Display.setCursor(W_CHR * COL_BATVAL, SC_LINES[1]);
     M5Cardputer.Display.setTextColor(TFT_WHITE, TFT_BLACK);
 
     uint8_t batLvl = (uint8_t)M5.Power.getBatteryLevel();  // Get battery level
